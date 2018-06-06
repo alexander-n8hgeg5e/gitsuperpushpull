@@ -4,7 +4,7 @@ from os import path
 from shlex import split
 import argparse
 from sys import argv
-from os import environ
+from os import environ,getcwd
 import neovim
 import logging
 """
@@ -21,6 +21,7 @@ dotfpushcmd='dotf push -q tmrl dev'
 pullcmdbase='git pull -q tmrl'
 dotfpullcmd='dotf pull tmrl dev'
 #LOGLEVEL=logging.WARNING
+#LOGLEVEL=logging.DEBUG
 LOGLEVEL=logging.INFO
 SHELLCMD_BASE = [ 'fish', '-c' ]
 
@@ -106,27 +107,25 @@ def check_pushpull(i):
   try:
     for j in get_branches(i):
       try:
-        log.info('doing push for branch '+j+' in dir '+i)
+        log.log(19,'doing push for branch '+j+' in dir '+i)
         pushcmd=pushcmdbase+' '+j
-        log.info(pushcmd)
+        log.log(19,pushcmd)
         check_call(['fish','-c','cd '+ i +';and '+pushcmd],stderr=DEVNULL)
       except KeyboardInterrupt: raise
       except:
         log.info('push failed for branch "'+j+'", doing pull in dir: '+i)
         try:
           pullcmd=pullcmdbase+' '+j
-          log.info(pullcmd)
+          log.log(19,pullcmd)
           out=check_output(['fish','-c','cd '+ i +';and '+pullcmd])
+          log.log(19,'doing push: '+i)
+          pushcmd=pushcmdbase+' '+j
+          log.log(19,pushcmd)
+          out=check_output(['fish','-c','cd '+ i +';and '+pushcmd])
+        except KeyboardInterrupt: raise
         except:
-          log.warning(out)
-          try:
-            log.info('doing push: '+i)
-            pushcmd=pushcmdbase+' '+j
-            log.info(pushcmd)
-            out=check_output(['fish','-c','cd '+ i +';and '+pushcmd])
-          except:
-            log.error(out)
-            raise
+          log.error(out)
+          raise
     return True
   except KeyboardInterrupt: raise
   except:
@@ -140,24 +139,39 @@ def dotfpushpull():
   """
   log.debug('')
   try:
-    log.info('doing push: dotfiles.')
+    log.log(19,'doing push: dotfiles.')
     check_call(['fish','-c',dotfpushcmd],stderr=DEVNULL)
   except KeyboardInterrupt: raise
   except:
     log.info('push failed, doing pull: dotfiles.')
     try:
       if check_call(['fish','-c',dotfpullcmd],stderr=DEVNULL):
-        log.info('doing push: dotfiles.')
+        log.log(19,'doing push: dotfiles.')
         check_call(['fish','-c',dotfpushcmd],stderr=DEVNULL)
     except KeyboardInterrupt: raise
     except:
         raise
 
-def check_and_fix_remote(i):
+def check_and_fix_some_stuff(i):
   """
   Checks the git remote entry and offer adding one or exclude the repo.
+  If returns true, allright.
   """
   log.debug('')
+  ### first check if repo is local
+  if not path.exists(i):
+    print('detected git dir that exists only on remote.')
+    inp = input('offer fix ? y/n/p , p meens exclude. :')
+    if inp == 'y':
+      fix_stuff(i)
+      return check_and_fix_some_stuff(i)
+    elif inp == 'n':
+      return False
+    elif inp == 'p':
+      append2excludefile(i,homedirexcludelistfilename)
+      log.info("added to excludeliste: "+str(i))
+      return False
+  ## dir is there , go on
   o=check_output(['fish','-c','cd '+ i +';and '+remotecmd]).decode().strip()
   if o.find('tmrl') is -1:
     cmdaddremotestr=gitaddremotecmd+i
@@ -167,9 +181,8 @@ def check_and_fix_remote(i):
         addremote(i)
       except KeyboardInterrupt: raise
       except:
-        fix_stuff()
-        check_and_fix_remote(i)
-      check_and_fix_remote(i)
+        fix_stuff(i)
+        return check_and_fix_some_stuff(i)
     elif inp == 'n':
       return False
     elif inp == 'p':
@@ -184,7 +197,7 @@ def ask_terminal(i):
   offer some rsync cmd that copies the repo to tmrl
   """
   log.debug('')
-  if input('want terminal to fix? (y/n):'):
+  if input('want terminal to fix? (y/n):')=='y':
     path=environ['NVIM_LISTEN_ADDRESS']
     nvim = neovim.attach('socket',path=path)
     win_id=nvim.call('win_getid')
@@ -218,6 +231,7 @@ def ask_exclude(i):
     inp = input('exclude '+str(i) +' ? (y/n) ')
     if inp == 'y':
       append2excludefile(i,homedirexcludelistfilename)
+      log.info('excluding: '+ i)
       return True
     else:
       return False
@@ -270,32 +284,62 @@ def calendarsync():
 
 def generate_liste(quick=None):
   log.debug('')
+  cmdbase=['fish', '-c']
+  cmdbase_remote=['ssh', 'tmrl', 'fish', '-c']
+  findcmdbase = 'find'
+  grepcmd = "grep -E '/[.]git$'"
+  cwd=getcwd()
   if not quick is None:
+      findtimeparam='-mtime -'+n
       n=quick
-      cmd=split("fish -c \"find -mtime -"+str(n)+"|grep '.git$'\"")
-      log.info(cmd)
+      cmd1=cmdbase+[findcmdbase+findtimeparam+'|'+grepcmd]
+      cmd2=cmdbase_remote+[findcmdbase+findtimeparam+'|'+grepcmd]
+      log.info(cmd1)
+      log.info(cmd2)
       print('processing modified stuff, during last '+str(n)+' * 24 h')
   else:
-      cmd = ['find', '-depth', '-name', '.git']
+      cmd1=cmdbase+[findcmdbase+'|'+grepcmd]
+      cmd2=cmdbase_remote+[findcmdbase+'|'+grepcmd]
+      log.info(cmd1)
+      log.info(cmd2)
+  liste1=[]
+  liste2=[]
   try :
-      p=Popen(cmd, stdout=PIPE, universal_newlines=False)
-      liste=p.stdout.read().decode(errors='replace').split()
+      p1=Popen(cmd1, stdout=PIPE, universal_newlines=False)
+      p2=Popen(cmd2, stdout=PIPE, universal_newlines=False)
+      liste1=p1.stdout.read().decode(errors='replace').split()
+      for j in liste1:
+          log.debug(j)
+      liste2=p2.stdout.read().decode(errors='replace').split()
+      for j in liste2:
+          log.debug(j)
   except KeyboardInterrupt:
       raise
   except:
       log.warning('find returned errors')    
   liste_=[]
-  for i in liste:
+  for i in liste1:
       liste_.append(path.abspath(i))
-  liste=liste_
+  for i in liste2:
+      liste_.append(path.normpath(cwd)+'/'+path.normpath(i))
+  liste=uniq(liste_)
   #always exclude from this list/filename
   liste = exclude(liste,homedirexcludelistfilename)
   liste.append('/usr/local/portage/.git')
   liste.sort(key = lambda s: len(s),reverse=True)
   log.info("liste:")
   log.info("#####")
-  log.info(liste)
+  for j in liste:
+      log.info(j)
   return liste
+
+def uniq(input):
+  output = []
+  for x in input:
+    if x not in output:
+      output.append(x)
+  return output
+
 
 
 def parse_args():
@@ -324,11 +368,9 @@ def gitsuperpushpull2tmrl():
       ## do the item processing
       item_not_done = True
       while item_not_done:
-           while not check_and_fix_remote(i):
-               if ask_exclude(i):
-                   break
-                   break
-               ask_terminal(i)
+           if not check_and_fix_some_stuff(i):
+               log.error('failed to fix item: '+i)
+               break
            while not check_pushpull(i):
                if ask_exclude(i):
                    break
