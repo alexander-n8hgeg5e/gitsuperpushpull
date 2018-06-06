@@ -7,6 +7,7 @@ DESCRIPTION="gitsuperpushpull pulls or pushes hardcoded stuff"
 HOMEPAGE=""
 EGIT_REPO_URI="${CODEDIR}""/gitsuperpushpull https://github.com/alexander-n8hgeg5e/gitsuperpushpull.git"
 EGIT_REPO_BRANCH="master"
+#EGIT_REPO_BRANCH="dev"
 
 LICENSE=""
 SLOT="0"
