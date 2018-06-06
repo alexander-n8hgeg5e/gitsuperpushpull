@@ -19,5 +19,4 @@ RDEPEND="${DEPEND}"
 
 src_install(){
 dobin gitsuperpushpull2tmrl
-dobin clone2tmrl
 }
