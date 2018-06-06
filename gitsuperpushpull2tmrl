@@ -17,10 +17,12 @@ branchcmd='git branch'
 remotecmd='git remote'
 mastercheckoutcmd='git checkout master'
 pushcmdbase='git push -q tmrl'
-dotfpushcmd='dotf push -q tmrl master'
+dotfpushcmd='dotf push -q tmrl dev'
 pullcmdbase='git pull -q tmrl'
-dotfpullcmd='dotf pull tmrl master'
-LOGLEVEL=logging.DEBUG
+dotfpullcmd='dotf pull tmrl dev'
+#LOGLEVEL=logging.WARNING
+LOGLEVEL=logging.INFO
+SHELLCMD_BASE = [ 'fish', '-c' ]
 
 try:
     log=logging.getLogger('root')
@@ -37,6 +39,28 @@ except Exception as e: logging.info(e)
 
 log.debug(homedirexcludelistfilename)
 
+
+def askcontinue():
+  if input('continue? (y/n) :') == 'y':
+    return True
+  else:
+    return false
+
+def askcmd(cmd):
+  if input('do? '+str(cmd))=='y':
+    check_call(cmd)
+
+
+def check_shell_call_in_dir(cmdstring,directorystring):
+    cmd = SHELLCMD_BASE + ['cd '+directory+';and '+string]
+    check_call(cmd)
+
+def clone2tmrl(i):
+  try: 
+    ask_rsync(i)
+  except:
+    ask_create_remotepath(i)
+    ask_rsync(i)
 
 def exclude(liste,excludelistfilename):
   """
@@ -72,8 +96,7 @@ def fix_stuff(dir):
   log.debug('remote config already checked.')
   log.debug('remaining reasons: remote git not ok, conflics, ...')
   ask_terminal(str(dir))
-  fixcmd='clone2tmrl '+str(dir)
-  check_call(['fish','-c','cd '+ dir +';'+fixcmd])
+  clone2tmrl(dir)
 
 def check_pushpull(i):
   """
@@ -86,25 +109,26 @@ def check_pushpull(i):
         log.info('doing push for branch '+j+' in dir '+i)
         pushcmd=pushcmdbase+' '+j
         log.info(pushcmd)
-        check_call(['fish','-c','cd '+ i +';'+pushcmd],stderr=DEVNULL)
+        check_call(['fish','-c','cd '+ i +';and '+pushcmd],stderr=DEVNULL)
       except KeyboardInterrupt: raise
       except:
         log.info('push failed for branch "'+j+'", doing pull in dir: '+i)
         try:
           pullcmd=pullcmdbase+' '+j
           log.info(pullcmd)
-          out=check_output(['fish','-c','cd '+ i +';'+pullcmd])
+          out=check_output(['fish','-c','cd '+ i +';and '+pullcmd])
         except:
-          print(out)
+          log.warning(out)
           try:
             log.info('doing push: '+i)
             pushcmd=pushcmdbase+' '+j
             log.info(pushcmd)
-            check_output(['fish','-c','cd '+ i +';'+pushcmd])
+            out=check_output(['fish','-c','cd '+ i +';and '+pushcmd])
           except:
-            print(out)
+            log.error(out)
             raise
     return True
+  except KeyboardInterrupt: raise
   except:
     return False
 
@@ -125,6 +149,7 @@ def dotfpushpull():
       if check_call(['fish','-c',dotfpullcmd],stderr=DEVNULL):
         log.info('doing push: dotfiles.')
         check_call(['fish','-c',dotfpushcmd],stderr=DEVNULL)
+    except KeyboardInterrupt: raise
     except:
         raise
 
@@ -133,13 +158,14 @@ def check_and_fix_remote(i):
   Checks the git remote entry and offer adding one or exclude the repo.
   """
   log.debug('')
-  o=check_output(['fish','-c','cd '+ i +';'+remotecmd]).decode().strip()
+  o=check_output(['fish','-c','cd '+ i +';and '+remotecmd]).decode().strip()
   if o.find('tmrl') is -1:
     cmdaddremotestr=gitaddremotecmd+i
     inp = input('do? answer y/n/p , p meens exclude. :'+str(cmdaddremotestr))
     if inp == 'y':
       try:
         addremote(i)
+      except KeyboardInterrupt: raise
       except:
         fix_stuff()
         check_and_fix_remote(i)
@@ -202,15 +228,15 @@ def addremote(i):
   """
   log.debug('')
   cmdaddremotestr=gitaddremotecmd+i
-  check_call(['fish','-c','cd '+ i +';'+cmdaddremotestr],stderr=DEVNULL)
+  check_call(['fish','-c','cd '+ i +';and '+cmdaddremotestr],stderr=DEVNULL)
 
 def check_branch(i):
-  o=check_output(['fish','-c','cd '+ i +';'+branchcmd]).decode().strip()
+  o=check_output(['fish','-c','cd '+ i +';and '+branchcmd]).decode().strip()
   if o.find('HEAD losgelöst') is not -1:
     if o.find('master') is not -1:
       log.info('doing master checkout: '+i)
-      check_call(['fish','-c','cd '+ i +';'+mastercheckoutcmd],stderr=DEVNULL)
-  o=check_output(['fish','-c','cd '+ i +';'+branchcmd]).decode().strip()
+      check_call(['fish','-c','cd '+ i +';and '+mastercheckoutcmd],stderr=DEVNULL)
+  o=check_output(['fish','-c','cd '+ i +';and '+branchcmd]).decode().strip()
   if o.find('* master') is not -1:
         return True
   else:
@@ -222,7 +248,7 @@ def get_branches(i):
   '''
   log.debug('')
   ll=[]
-  l = check_output(['fish','-c','cd '+ i +';'+branchcmd]).decode().splitlines()
+  l = check_output(['fish','-c','cd '+ i +';and '+branchcmd]).decode().splitlines()
   for i in l:
       if i.find('* (HEAD ') is not -1:
           pass
@@ -262,10 +288,6 @@ def generate_liste(quick=None):
   for i in liste:
       liste_.append(path.abspath(i))
   liste=liste_
-  if not quick is None:
-    liste = exclude(liste,'/home/esadman/code/gitsuperpushpull/exclude_3_mergeme')
-    liste = exclude(liste,'/home/esadman/code/gitsuperpushpull/exclude')
-    liste = exclude(liste,'/home/esadman/code/gitsuperpushpull/exclude__')
   #always exclude from this list/filename
   liste = exclude(liste,homedirexcludelistfilename)
   liste.append('/usr/local/portage/.git')
@@ -314,12 +336,12 @@ def gitsuperpushpull2tmrl():
                ask_terminal(i)
                try:
                    ask_rsync(i)
+               except KeyboardInterrupt: raise
                except:
                    ask_create_remotepath(i)
                    ask_rsync(i)
            item_not_done = False # if the check_pushpull loop is terminated, either excluded or done.
   ## do some other stuff
-  dotfpushpull()
   calendarsync()
   log.debug('done')
 
