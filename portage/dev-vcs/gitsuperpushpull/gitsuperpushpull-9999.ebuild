@@ -3,7 +3,7 @@
 
 EAPI=6
 inherit git-r3 eutils
-DESCRIPTION="gitsuperpushpull pulls or pushes hardcoded stuff"
+DESCRIPTION="gitsuperpushpull helps to push local messy git submodule trees to other machines"
 HOMEPAGE=""
 EGIT_REPO_URI="${CODEDIR}""/gitsuperpushpull https://github.com/alexander-n8hgeg5e/gitsuperpushpull.git"
 EGIT_REPO_BRANCH="master"
@@ -18,5 +18,5 @@ DEPEND=""
 RDEPEND="${DEPEND}"
 
 src_install(){
-dobin gitsuperpushpull2tmrl
+dobin gitsuperpushpull
 }
