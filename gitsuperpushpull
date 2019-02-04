@@ -1,0 +1,1184 @@
+#!/usr/bin/python3
+# Copyright 2018 Alexander Wilhelmi
+# This file is part of gitsuperpushpull.
+# 
+# gitsuperpushpull is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# gitsuperpushpull is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with gitsuperpushpull.  If not, see <http://www.gnu.org/licenses/>.
+# 
+# Diese Datei ist Teil von gitsuperpushpull.
+# 
+# gitsuperpushpull ist Freie Software: Sie können es unter den Bedingungen
+# der GNU General Public License, wie von der Free Software Foundation,
+# Version 3 der Lizenz oder (nach Ihrer Wahl) jeder neueren
+# veröffentlichten Version, weiter verteilen und/oder modifizieren.
+# 
+# gitsuperpushpull wird in der Hoffnung, dass es nützlich sein wird, aber
+# OHNE JEDE GEWÄHRLEISTUNG, bereitgestellt; sogar ohne die implizite
+# Gewährleistung der MARKTFÄHIGKEIT oder EIGNUNG FÜR EINEN BESTIMMTEN ZWECK.
+# Siehe die GNU General Public License für weitere Details.
+# 
+# Sie sollten eine Kopie der GNU General Public License zusammen mit diesem
+# Programm erhalten haben. Wenn nicht, siehe <https://www.gnu.org/licenses/>.
+from subprocess import check_output,check_call,Popen,PIPE,DEVNULL,STDOUT,CalledProcessError,call
+from os import path
+from shlex import split,quote
+import argparse
+from sys import argv
+from os import environ,getcwd
+import neovim
+import logging
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description='update tool')
+    parser.add_argument('-q', '--quick', type=int , metavar='days' ,action="store" ,help='speed up, by only processing dirs modified  more recently than now minus days (+/- 1 day)')
+    parser.add_argument('-t', '--ssh-target', action="store" ,help='string that defines the other host and that is configured for ssh like foo in "ssh foo"')
+    parser.add_argument('-d', '--debug', action="store_true" ,help='enable debug output')
+    parser.add_argument('-p', '--search-path', action="store" ,help='call from git toplevel and specify path to search stuff')
+    
+    parser.add_argument('-s', '--gitsuperpushpull', action="store_true" ,help='do the gitsuperpushpull thing')
+
+    parser.add_argument('-m', '--submodule-fix', action="store_true" ,
+            help=
+            """Removes from the index all path that has a .git dir and has no .git above them\n
+            Then it uses 'git add submodule' to add the repo as submodule in that place.\n
+            The prog asks and shows a list of the commands.
+            """)
+    return parser.parse_args()
+
+args=parse_args()
+
+############     config   ###################################################################
+
+excludelistfilename=".gitsuperpushpull_exclude"
+
+for i in argv:
+    if (i.find('-d') is not -1 ) or (i.find('--debug') is not -1):
+        LOGLEVEL=logging.DEBUG
+    else:
+        LOGLEVEL=logging.WARNING
+        #LOGLEVEL=logging.INFO
+
+SHELLCMD_BASE = [ 'fish', '-c' ]
+sshhost_string=args.ssh_target
+
+
+
+
+############     logging     ###################################################################
+try:
+    log=logging.getLogger('root')
+    log.setLevel(LOGLEVEL)
+    handler=logging.StreamHandler()
+    ## level for this handler
+    handler.setLevel(LOGLEVEL)
+    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(funcName)s: %(message)s'))
+    log.addHandler(handler)
+except KeyboardInterrupt as e: raise e
+except Exception as e: logging.info(e)
+
+log.debug(excludelistfilename)
+
+############   brain functions   ##########################################################################################
+
+def gitsuperpushpull():
+  l_only_local, l_only_remote, l_both = generate_liste_3merge(quick=args.quick)
+
+  # local only stuff
+  log.debug("local_only stuff...")
+  for i in l_only_local:
+      log.debug("   "+i)
+      if checkr_create_git_remote_entry(i):
+          if check_init_remote_git_dir(remove_trailing_somewhat_from_path(i)):
+              log.debug("appending to both list")
+              both.append(i)
+          else:
+              log.error('missing remote git dir: '+i)
+      else:
+          log.error("remote entry problem : "+i)
+
+  # remote only stuff
+  log.debug("remote_only stuff...")
+  for i in l_only_remote:
+      log.debug("   "+i)
+      if check_ask_init_git_dir(remove_trailing_somewhat_from_path(i)):
+          if checkr_create_git_remote_entry(i):
+              log.debug("appending to both list")
+              both.append(i)
+          else:
+              log.error('missing git remote entry : '+i)
+      else:
+          log.error("missing local git dir : "+i)
+
+  
+  
+  # process the ones that exist on both sides
+  log.debug("processing local and remote exitsting .git dirs...")
+  for dotgitdir in l_both:
+    log.debug(dotgitdir)
+    if not args.quick is None:
+      log.debug("quick mode")
+      # if quick -> need to see what happens.
+      print('processing: '+dotgitdir)
+    else:
+      # not quick.
+      log.debug("no quick mode")
+      log.info('processing: '+dotgitdir)
+    ## need path
+    repopath = remove_trailing_somewhat_from_path(dotgitdir)
+    ## do the item processing
+    if not checkr_create_git_remote_entry(dotgitdir):
+         log.error('failed to fix item: '+dotgitdir)
+    else:
+        if not check_pushpull(repopath):
+             if not ask_exclude(dotgitdir):
+                 ask_terminal(remove_trailing_somewhat_from_path(dotgitdir))
+
+
+
+  ## do some other stuff
+  calendarsync()
+  log.debug('done')
+
+def check_git_remote_entry_name(dotgitdir):
+  """
+  checks for only the name of the entry,
+  by useing 'git remote' without verbose options.
+  """
+  remotecmd='git remote'
+  repopath=remove_trailing_somewhat_from_path(dotgitdir)
+  log.debug('checking remote entry name in path: '+ repopath)
+  fish_script=prepend_goto_dir_to_fishcode(remotecmd,repopath) 
+  log.debug("running: "+ fish_script)
+  try:
+      o = check_output_fish_shellscript(fish_script).decode().splitlines()
+  except:
+      log.error("CHECK FAILED somehow")
+      log.error('output was :' + str(o))
+      return False
+  log.debug("output was: "+str(o))
+  foundname=False
+  for j in o:
+      if not j.find(sshhost_string) is -1:
+          foundname=True
+  return foundname
+
+def check_git_remote_entry_path(name, url, dotgitdir):
+  """
+  checks the url of git remote entry.
+  by useing 'git remote -vv'
+  returns (output,result)
+  """
+  remotecmd='git remote -vv'
+  repopath=remove_trailing_somewhat_from_path(dotgitdir)
+  log.debug('checking url of remote entry '+name+' in path: '+ repopath)
+  fish_script=prepend_goto_dir_to_fishcode(remotecmd,repopath) 
+  log.debug("running: "+ fish_script)
+  try:
+      o = check_output_fish_shellscript(fish_script).decode().splitlines()
+  except:
+      log.error("CHECK FAILED somehow")
+      log.error('output was :' + str(o))
+      return False
+  log.debug("output was: "+str(o))
+  foundurl=False
+  for j in o:
+      if j.find(name) == 0:
+          log.debug("found name: "+ name)
+          log.debug("searching for '"+url+"'"+" in : '"+j+"'" )
+          if not j.find(url) is -1:
+              log.debug("found '"+url+"'"+" in :"+j )
+              foundurl=True
+  return o,foundurl
+
+def checkr_create_git_remote_entry(dotgitdir,check_remote=False):
+  """
+  Checks recursively if remote entry is existing and path is as expected.
+  Offers fixes to the user.
+  If returns true -> allright.
+  """
+  repopath=remove_trailing_somewhat_from_path(dotgitdir)
+
+  foundname=check_git_remote_entry_name(dotgitdir)
+
+  if not foundname:
+    print("problem detected: REMOTE ENTRY MISSING: local gitdir: "+dotgitdir)
+    print()
+    inp = input('offer_(f)ix/(e)xclude/(n)othing ? :')
+    if inp == 'e':
+      append2excludefile(repopath,excludelistfilename)
+      log.info("permanently added to excludeliste -> EXCLUDING: "+str(dotgitdir))
+      # faulty condition not fixed -> no sence to pushpull, return False 
+      log.debug("because of EXCLUDE, RETURNING FALSE for item")
+      return False
+    elif inp == 'n':
+      log.debug(" NO ACTION, faulty condition not fixed -> no sence to pushpull, RETURNING FALSE ")
+      return False
+    if inp == 'f':
+      # offer a fix
+      if not check_ask_create_git_remote_entry(repopath):
+          log.error("FIX FAILED : "+ dotgitdir)
+          # offer terminal
+          ask_terminal(repopath)
+          # maybe its fixes, check again
+          if not check_ask_create_git_remote_entry(repopath):
+              return False
+  if foundname:
+      url=sshhost_string+':'+repopath
+      o,remote_entry_ok = check_git_remote_entry_path( sshhost_string, url, dotgitdir )
+      if not remote_entry_ok:
+        print("problem detected: REMOTE ENTRY WRONG: local repopath: "+repopath)
+        print("problem detected: remote entry wrong: git remote output: "+str(o))
+        print()
+        inp = input('(t)erminal/(e)xclude/(n)othing ? :')
+        if inp == 'e':
+          append2excludefile(repopath,excludelistfilename)
+          log.info("added to excludefile: "+str(dotgitdir))
+          # faulty condition not fixed -> no sence to pushpull, return False 
+          log.debug("false")
+          return False
+        elif inp == 'n':
+          # faulty condition not fixed -> no sence to pushpull, return False 
+          log.debug("false")
+          return False
+        if inp == 't':
+              terminal(repopath)
+              # maybe its fixes, check again
+              return checkr_create_git_remote_entry(dotgitdir)
+      else:
+          # git 'remote entry' exists
+          log.debug("true")
+          return True
+
+
+def check_pushpull(repopath):
+  """
+  Tries to push to remote first, then tries to pull and push to/from remote.
+  """
+  log.debug('')
+  """ --no-recurse-submodules because recursion is in here already.
+      and leaving it out can fix push errors
+  """
+  pushcmdbase='git push --no-recurse-submodules ' + sshhost_string
+  pullcmdbase='git pull ' + sshhost_string
+  try:
+    for branch in get_branches(repopath):
+      log.debug('branch: '+branch)
+      try:
+        log.log(19,'doing PUSH FOR BRANCH '+branch+' in dir '+repopath)
+        # prepare
+        log.debug("prepareing push...")
+        pushcmd=pushcmdbase+' '+branch
+        fish_script=prepend_goto_dir_to_fishcode(pushcmd,repopath)
+        log.log(19,fish_script)
+        # run
+        log.debug("push...")
+        pushcmd=pushcmdbase+' '+branch
+        log.debug("here the script: "+ str(fish_script))
+        p = Popen_fish_shellscript(fish_script)
+        p.wait()
+        stdout,stderr=p.communicate()
+        log.debug(p.returncode)
+        if p.returncode is not 0:
+            raise CalledProcessError(p.returncode,fish_script,output=stdout,stderr=stderr)
+      except KeyboardInterrupt: raise
+      except CalledProcessError as e:
+        log.info(e)
+        log.info(e.stdout+e.stderr)
+        text=(e.stderr+e.stdout).decode(errors="replace")
+        log.debug('text: '+ text)
+        f1 = text.find("does not appear to be a git repository")
+        if f1 is not -1:
+            ask_rsync_to_remote(repopath)
+        log.info('PUSH FAILED for branch "'+branch+'", doing pull in dir: '+repopath)
+        try:
+          # prepare pull
+          log.debug("prepareing pull...")
+          pullcmd=pullcmdbase+' '+branch
+          log.log(19,pullcmd)
+          fish_script=prepend_goto_dir_to_fishcode(pullcmd,repopath)
+          log.log(19,fish_script)
+          # pull
+          log.debug("pull...")
+          out=check_output_fish_shellscript(fish_script)
+          # prepare push
+          log.debug("prepare push...")
+          pushcmd=pushcmdbase+' '+branch
+          log.log(19,pushcmd)
+          fish_script=prepend_goto_dir_to_fishcode(pushcmd,repopath)
+          log.log(19,fish_script)
+          # push
+          log.log(19,'doing push: '+repopath)
+          log.debug("push...")
+          out=check_output_fish_shellscript(fish_script)
+        except KeyboardInterrupt: raise
+        except CalledProcessError:
+          log.error('2nd attempt to push by doing a "PULL-PUSH" FAILED for branch "'+branch+'", in dir : '+repopath)
+          raise
+    return True
+  except KeyboardInterrupt: raise
+  except CalledProcessError:
+      log.error('All attempts to PUSH BRANCH "'+branch+'", in dir "'+repopath+'" FINALLY FAILED')
+      return False 
+
+
+
+############   other functions   ##########################################################################################
+
+
+
+def prepend_goto_dir_to_fishcode(code,dir_):
+    log.debug('')
+    quoted_dir = single_quote_it(dir_)  
+    return "cd "+quoted_dir+"; and "+code
+
+
+def single_quote_it(s):
+    return "'"+s+"'"
+
+
+def terminal(repopath):
+  """
+  """
+  log.debug('')
+  path=environ['NVIM_LISTEN_ADDRESS']
+  nvim = neovim.attach('socket',path=path)
+  win_id=nvim.call('win_getid')
+  nvim.command('tabnew')
+  fish_script=prepend_goto_dir_to_fishcode('echo ok',repopath)
+  nvim.call('termopen',['fish', '-C', fish_script])
+  nvim.command('tnoremap <buffer> <C-q> <C-\><C-n>:q<CR>:call win_gotoid('+str(win_id)+')<CR>i')
+  print()
+  input('done? press enter or so')
+
+
+def ask_terminal(repopath):
+  """
+  """
+  log.debug('')
+  print()
+  if input('want terminal to fix? (y/n):')=='y':
+    path=environ['NVIM_LISTEN_ADDRESS']
+    nvim = neovim.attach('socket',path=path)
+    win_id=nvim.call('win_getid')
+    nvim.command('tabnew')
+    fish_script=prepend_goto_dir_to_fishcode('echo ok',repopath)
+    nvim.call('termopen',['fish', '-C', fish_script])
+    nvim.command('tnoremap <buffer> <C-q> <C-\><C-n>:q<CR>:call win_gotoid('+str(win_id)+')<CR>i')
+    print()
+    input('done? press enter or so')
+
+
+def ask_rsync_to_remote(repopath):
+  """
+  offer some rsync cmd that copies the repo to remote
+  """
+  log.debug('')
+  src         = repopath
+  dest_       = remove_trailing_somewhat_from_path(repopath)+'/'
+  dest        = sshhost_string+':'+dest_
+  quoted_src  = single_quote_it(src)
+  quoted_dest = single_quote_it(dest)
+  fish_script = "rsync -auiv "+quoted_src+" "+quoted_dest 
+  print()
+  if input('do fish-script: '+fish_script+' if yes , type uppercase yes:') == 'YES':
+    is_exitcode_ok_fish_shellscript(fish_script)
+
+def ask_rsync_from_remote(repopath):
+  """
+  offer some rsync cmd that copies the repo to remote
+  """
+  log.debug('')
+  src_        = repopath
+  dest        = remove_trailing_somewhat_from_path(repopath)+'/'
+  src         = sshhost_string+':'+src_
+  quoted_src  = single_quote_it(src)
+  quoted_dest = single_quote_it(dest)
+  fish_script = "rsync -auiv "+quoted_src+" "+quoted_dest 
+  print()
+  if input('do fish-script: '+fish_script+' if yes , type uppercase yes:') == 'YES':
+    is_exitcode_ok_fish_shellscript(fish_script)
+
+def ask_create_remotepath(repopath):
+    """
+    Offer cmd to create remotepath.
+    """
+    base_cmd= 'mkdir -p'
+    fish_script = base_cmd+' '+repopath
+    ask_remote_fish_shell_script(fish_script,sshhost_string)
+
+def ask_create_path(repopath):
+    """
+    Offer cmd to create remotepath.
+    """
+    base_cmd= 'mkdir -p'
+    fish_script = base_cmd+' '+repopath
+    ask_fish_shell_script(fish_script)
+
+def check_remote_path(p):
+    p_quoted=single_quote_it(p)
+    fish_script='stat '+p_quoted
+    log.debug(fish_script)
+    if is_exitcode_ok_remote_fish_shellscript(fish_script,sshhost_string)==0:
+        return True
+    else:
+        return False
+
+def ask_exclude(dotgitdir):
+    log.debug('')
+    print()
+    inp = input('exclude '+str(dotgitdir) +' ? (y/n) ')
+    if inp == 'y':
+      append2excludefile(remove_trailing_somewhat_from_path(dotgitdir),excludelistfilename)
+      log.info('excluding: '+ dotgitdir)
+      return True
+    else:
+      return False
+
+def check_ask_create_git_remote_entry(repopath):
+  """
+  Add the remote entry to the the specified repo.
+  """
+  log.debug( "creating remote entry in : "+ repopath )
+  gitaddremotecmd = "git remote add"
+  git_remote_entry_name = sshhost_string
+  git_remote_url_part0 = sshhost_string+":"
+  git_remote_url = git_remote_url_part0+repopath
+  quoted_git_remote_url = single_quote_it(git_remote_url)
+  log.info( "ADDING REMOTE ENTRY to git repo: " + git_remote_url )
+  log.info( "quoted git remote url : " + quoted_git_remote_url )
+  fish_script_pre = gitaddremotecmd+' '+git_remote_entry_name+' '+quoted_git_remote_url
+  fish_script = prepend_goto_dir_to_fishcode(fish_script_pre,repopath)
+  print()
+  inp = input('do? answer y/n : '+str(fish_script))
+  if inp=='y':
+      log.debug('yes answered, running fish script')
+      log.debug(fish_script)
+      retcode = call_fish_shellscript(fish_script)
+      log.debug(retcode)
+      if retcode == 128 or retcode==0:  
+          log.debug('true')
+          return True
+      else:
+          log.debug('false')
+          return False
+  else:
+      log.debug('false')
+      return False
+
+def get_branches(repopath):
+  '''
+  returns list of branches in repopath dir
+  '''
+  branchcmd="git branch --format '%(refname)'"
+  log.debug('entry')
+  fish_script = prepend_goto_dir_to_fishcode(branchcmd,repopath)
+  ll=[]
+  log.debug('fish script: '+fish_script)
+  l = check_output_fish_shellscript(fish_script).decode().splitlines()
+  log.debug('fish script done')
+  for i in l:
+      if i.find('/') is -1: #means no refs/heads/branchname output , so no branch
+          pass
+          ##  no branch to push
+          ##  if no branch, no need to push
+      else:
+          ll.append( path.basename( i.strip('*').strip() ) )
+      
+  return ll
+
+def calendarsync():
+  log.debug('')
+  """
+  sync pimdir
+  """
+  log.debug('')
+  is_exitcode_ok_fish_shellscript('calendarsync')
+
+
+def generate_liste_local(quick=None,localpath=True):
+    """
+    gen list of git repos.
+    One list of repos that exist on the local system.
+    The repos are identified by there path.
+    Not much is checked to verify them somehow.
+    If some number to the quick keyword argument is given,
+    then only modified repos are searched
+    that has been modified within the count of days,
+    that the quick parameter tells.
+    """
+    log.debug('list generation ...')
+
+    # useing find to find em
+    findcmdbase = 'find'
+    if args.search_path is not None:
+        findcmdbase=findcmdbase+' '+ args.search_path
+    # using grep to get grep em
+    grepcmd = "grep -E '/[.]git$'"
+
+    cwd = getcwd() # get current workdir 
+
+    if not quick is None:  # quick mode
+        findtimeparam = '-mtime -'+str(quick)
+        cmd           = findcmdbase+' '+findtimeparam+' | '+grepcmd
+        cmd_remote    = prepend_goto_dir_to_fishcode(cmd,cwd)
+        log.info("cmd for find em: " + cmd)
+        log.info("cmd for find em on the remote system: "+ cmd_remote)
+        print( 'MESSAGE: Processing only modified stuff, during last ' + str(quick) + ' * 24 h' )
+    else:                  # no hurry mode, get em all 
+        cmd           = findcmdbase + '|' + grepcmd
+        cmd_remote    = prepend_goto_dir_to_fishcode( cmd, cwd )
+        log.info("cmd for find em: " + cmd)
+        log.info("cmd for find em on the remote system: "+ cmd_remote)
+   
+    #prepare the lists
+    liste_local   = []
+   
+    #local scan
+    try:    out = check_output_fish_shellscript( cmd )
+    except  KeyboardInterrupt: raise # Feature: Interruptable
+    except: 
+            log.warning('LOCAL Find returned errors, something went wrong.' )    
+            raise
+    liste_local = out.decode( errors = 'replace' ).splitlines() 
+    for j in liste_local:
+        log.debug( 'found some  LOCAL-GIT-DIR : ' + j )
+   
+    # clean the found stuff
+    if not localpath:
+        ll  =  []
+        for i in liste_local:
+            ll.append(path.abspath(i))   
+        liste_local  = ll
+    
+   
+    # remove dupes
+    liste=uniq(liste_local)
+   
+    
+    liste.sort( key = lambda s: len(s),reverse=True)
+   
+    #log
+    log.info("liste:")
+    log.info("#####")
+    for j in liste:
+        log.info(j)
+   
+    return liste
+
+
+
+def generate_liste_3merge(quick=None):
+    """
+    gen 3 lists of git repos.
+    One list of repos that exist only on the local system.
+    One list of repos only remote system.
+    One list of repos that exit on both systems.
+    The repos are identified by their path.
+    Not much is checked to verify them.
+    If some number to the quick keyword argument is given,
+    then only modified repos are searched
+    that has been modified within the count of days,
+    that the quick parameter tells.
+    """
+    log.debug('list generation ...')
+
+    # useing find to find em
+    findcmdbase = 'find'
+    if args.search_path is not None:
+        findcmdbase=findcmdbase+' '+ args.search_path
+    # using grep to get grep em
+    grepcmd = "grep -E '/[.]git$'"
+
+    cwd = getcwd() # get current workdir 
+
+    if not quick is None:  # quick mode
+        findtimeparam = '-mtime -'+str(quick)
+        cmd           = findcmdbase+' '+findtimeparam+' | '+grepcmd
+        cmd_remote    = prepend_goto_dir_to_fishcode(cmd,cwd)
+        log.info("cmd for find em: " + cmd)
+        log.info("cmd for find em on the remote system: "+ cmd_remote)
+        print( 'MESSAGE: Processing only modified stuff, during last ' + str(quick) + ' * 24 h' )
+    else:                  # no hurry mode, get em all 
+        cmd           = findcmdbase + '|' + grepcmd
+        cmd_remote    = prepend_goto_dir_to_fishcode( cmd, cwd )
+        log.info("cmd for find em: " + cmd)
+        log.info("cmd for find em on the remote system: "+ cmd_remote)
+   
+    #prepare the lists
+    liste_local   = []
+    liste_remote  = []
+   
+    #local scan
+    try:    out = check_output_fish_shellscript( cmd )
+    except  KeyboardInterrupt: raise # Feature: Interruptable
+    except: 
+            log.warning('LOCAL Find returned errors, something went wrong.' )    
+            raise
+    liste_local = out.decode( errors = 'replace' ).splitlines() 
+    for j in liste_local:
+        log.debug( 'found some  LOCAL-GIT-DIR : ' + j )
+   
+    #remote scan
+    try:    out = check_output_remote_fish_shellscript( cmd_remote, sshhost_string )
+    except  KeyboardInterrupt: raise
+    except CalledProcessError:
+        var0 = out.decode(errors="replace")
+        log.debug(out)
+        var1 = var0.find("Directory")
+        if ( var0 is not -1) and (var0[var1:].find("does not exist") is not -1):
+            log.debug("case to handle")
+    except:
+        log.warning('REMOTE find returned errors, something went wrong.' )    
+        raise
+    liste_remote = out.decode(errors='replace').splitlines()
+    for j in liste_remote:
+        log.debug( 'found some  REMOTE-GIT-DIR : ' + j )
+    
+    # clean the found stuff
+    ll  =  []
+    lr  =  []
+    for i in liste_local:
+        ll.append(path.abspath(i))   
+    for i in liste_remote:
+        lr.append(path.normpath(cwd)+'/'+path.normpath(i))
+    liste_remote = lr
+    liste_local  = ll
+   
+    # remove dupes
+    liste=uniq(liste_remote)
+    liste=uniq(liste_local)
+   
+    # make 3 of em
+    l_only_remote = []
+    l_only_local  = []
+    l_both        = [] 
+    for i in liste_local:
+        if i in liste_remote:
+            l_both.append(i)
+        else:
+            l_only_local.append(i)
+    for i in liste_remote:
+        if i not in liste_local:
+            l_only_remote.append(i)
+   
+    
+    #always exclude stuff
+    l_only_local = exclude(l_only_local)
+    l_only_remote = exclude(l_only_remote)
+    l_both = exclude(l_both)
+   
+    # extra dir
+    l_both.append(environ.get('HOME')+'/code/portage/.git')
+   
+   
+    l_both.sort(       key = lambda s: len(s),reverse=True)
+    l_only_remote.sort(key = lambda s: len(s),reverse=True)
+    l_only_local.sort( key = lambda s: len(s),reverse=True)
+   
+    #log
+    log.info("liste:")
+    log.info("#####")
+    for j in l_only_local:
+        log.debug("only locals:")
+        log.info(j)
+    for j in l_only_remote:
+        log.debug("only remotes:")
+        log.info(j)
+    for j in l_both:
+        log.debug("both:")
+        log.info(j)
+   
+    return l_only_local, l_only_remote, l_both
+
+
+def uniq(input):
+  output = []
+  for x in input:
+    if x not in output:
+      output.append(x)
+  return output
+
+
+
+
+
+def remove_trailing_somewhat_from_path(p):
+    return path.split(path.normpath(p))[0]
+
+def append_dotgit_to_path(p):
+    return p+'/.git'
+
+def is_exitcode_ok_remote_fish_shellscript(fish_script,sshhost_string, *args, **kwargs):
+  """
+  Uses ssh to check call a remote fishscript.
+  """
+  # ssh eats shell scripts.
+  ssh_shell_script_aka_command = "fish -c "+quote(fish_script)
+
+  # prepare the thing
+  pythonish_sshcmd = [ 'ssh', sshhost_string , ssh_shell_script_aka_command  ]
+  # and let it run
+  return check_call(pythonish_sshcmd, *args, **kwargs)
+
+
+def call_fish_shellscript(fish_script, *args, **kwargs):
+  """
+  check call a fishscript.
+  """
+  log.debug( fish_script)
+  log.debug( args)
+  log.debug( kwargs)
+  # prepare the thing
+  pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  # and let it run
+  return call(pythonish_cmd, *args, stderr=STDOUT, **kwargs)
+
+
+def call_fish_shellscript_silent(fish_script, *args, **kwargs):
+  """
+  check call a fishscript.
+  """
+  log.debug( fish_script)
+  log.debug( args)
+  log.debug( kwargs)
+  # prepare the thing
+  pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  # and let it run
+  return call(pythonish_cmd, *args, **kwargs)
+
+def check_except_fish_shellscript(fish_script, *args, **kwargs):
+  """
+  check a fishscript.
+  """
+  # prepare the thing
+  pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  # and let it run
+  try:
+      out = check_output(pythonish_cmd, *args, stderr=STDOUT, **kwargs)
+      log.debug("running fish shellscript and check for exceptions: "+ str(fish_script))
+      log.info(out.decode(errors='replace').strip('\n'))
+  except KeyboardInterrupt: raise
+
+
+def check_except_fish_shellscript_silent(fish_script, *args, **kwargs):
+  """
+  check a fishscript silent.
+  """
+  # prepare the thing
+  pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  # and let it run
+  try:
+      out = check_output(pythonish_cmd, *args, **kwargs)
+      log.debug("running fish shellscript and check for exceptions: "+ str(fish_script))
+      log.log(19,out.decode(errors='replace').strip('\n'))
+  except KeyboardInterrupt: raise
+
+
+def is_exitcode_ok_fish_shellscript(fish_script, *args, **kwargs):
+  """
+  check a fishscript.
+  """
+  # prepare the thing
+  pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  # and let it run
+  try:
+      out = check_output(pythonish_cmd, *args, stderr=STDOUT, **kwargs)
+      log.debug("running fish shellscript and check for exceptions: "+ str(fish_script))
+      log.info(out.decode(errors='replace').strip('\n'))
+  except KeyboardInterrupt: raise
+  except CalledProcessError as e:
+     return False
+  log.debug("No CalledProcessError returning True" )
+  return True
+
+def is_exitcode_ok_fish_shellscript_silent(fish_script, *args, **kwargs):
+  """
+  check a fishscript silent.
+  """
+  # prepare the thing
+  pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  # and let it run
+  try:
+      out = check_output(pythonish_cmd, *args, **kwargs)
+      log.debug("running fish shellscript and check for exceptions: "+ str(fish_script))
+      log.log(19,out.decode(errors='replace').strip('\n'))
+  except KeyboardInterrupt: raise
+  except CalledProcessError as e:
+     return False
+  log.debug("No CalledProcessError returning True" )
+  return True
+
+
+def Popen_fish_shellscript(fish_script, *args, **kwargs):
+  """
+  check_output a fishscript.
+  """
+  # prepare the thing
+  pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  # and let it run
+  log.debug("running fish shellscript and return output: "+ str(fish_script))
+  return Popen(pythonish_cmd, *args, stdout=PIPE, stderr=PIPE, shell=False, **kwargs)
+
+def Popen_remote_fish_shellscript(fish_script, sshhost_string, *args,  **kwargs):
+  """
+  Uses ssh to check_output a remote fishscript.
+  """
+  # ssh eats shell scripts.
+  ssh_shell_script_aka_command = "fish -c "+quote(fish_script)
+  log.debug(ssh_shell_script_aka_command)
+
+  # prepare the thing
+  pythonish_sshcmd = [ 'ssh', sshhost_string , ssh_shell_script_aka_command ]
+  # and let it run
+  return Popen(pythonish_sshcmd, *args, shell=False, **kwargs)
+
+def check_output_fish_shellscript(fish_script, stdout=PIPE, stderr=PIPE, *args, **kwargs):
+  """
+  check_output a fishscript.
+  """
+  # prepare the thing
+  pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  # and let it run
+  log.debug("running fish shellscript and return output: "+ str(fish_script))
+  return check_output(pythonish_cmd, *args, stderr=STDOUT, shell=False, **kwargs)
+
+def check_output_remote_fish_shellscript(fish_script, sshhost_string, *args,  **kwargs):
+  """
+  Uses ssh to check_output a remote fishscript.
+  """
+  # ssh eats shell scripts.
+  ssh_shell_script_aka_command = "fish -c "+quote(fish_script)
+  log.debug(ssh_shell_script_aka_command)
+
+  # prepare the thing
+  pythonish_sshcmd = [ 'ssh', sshhost_string , ssh_shell_script_aka_command ]
+  # and let it run
+  return check_output(pythonish_sshcmd, *args, stderr=STDOUT, shell=False, **kwargs)
+
+def ask_fish_shell_script(fish_script):
+  print()
+  if input('do fish-script: '+fish_script+' if yes , type yes:') == 'yes':
+    is_exitcode_ok_fish_shellscript(fish_script)
+
+def ask_remote_fish_shell_script(fish_script,sshhost_string):
+  print()
+  if input('do fish-script: '+fish_script+' if yes , type yes:') == 'yes':
+    is_exitcode_ok_remote_fish_shellscript(fish_script,sshhost_string)
+    
+
+def clone2remote(dir_):
+  try: 
+    ask_rsync_to_remote(dir_)
+  except:
+    ask_create_remotepath(dir_)
+    ask_rsync_to_remote(dir_)
+
+def clone_from_remote(dir_):
+  try: 
+    ask_rsync_from_remote(dir_)
+  except:
+    ask_create_path(dir_)
+    ask_rsync_from_remote(dir_)
+
+def find_excludefilenames(localpath=True):
+    # useing find to find em
+    findcmdbase = 'find'
+    if args.search_path is not None:
+        findcmdbase=findcmdbase+' '+ args.search_path
+    cmd=findcmdbase+' -type f -name ' + excludelistfilename
+    
+    #prepare the lists
+    liste   = []
+   
+    #local scan
+    try:    out = check_output_fish_shellscript( cmd )
+    except  KeyboardInterrupt: raise # Feature: Interruptable
+    except: 
+            log.warning('LOCAL Find returned errors, something went wrong.' )    
+            raise
+    liste = out.decode( errors = 'replace' ).splitlines() 
+    for j in liste:
+        log.debug( 'found some  EXCLUDEFILE : ' + j )
+   
+    # clean the found stuff
+    if not localpath:
+        ll  =  []
+        for i in liste:
+            ll.append(path.abspath(i))   
+        liste  = ll
+   
+    # remove dupes
+    liste=uniq(liste)
+    return liste
+
+
+def exclude(liste_of_dotgitdir):
+
+  """
+  Excludes stuff from excludelistfilenames that are found inside the current workdir tree, from the list that will be processed.
+  No Wildcards are allowed.
+  Match with path to dotgitdir is needed. 
+  Relative path is allowed.
+  like so: "./bla/blabla/.git"
+  or so  : "/home/foo/bar/.git"
+  """
+  ex_files=find_excludefilenames()
+  log.debug('')
+  removeliste=[]
+  for k in ex_files: 
+     if path.exists(k):
+         f=open(k,'rb')
+         removeliste.extend(f.read().decode().split())
+         f.close()
+  dotgitdirs=liste_of_dotgitdir
+  log.debug(removeliste)
+  for r in removeliste:
+      dotgitdirstoexclude = preprocess_exclude_entry(r)
+      for dotgitdirtoexclude in dotgitdirstoexclude:
+        if not dotgitdirtoexclude is None:
+          for dotgitdiraround in dotgitdirs:
+              if dotgitdiraround==dotgitdirtoexclude:
+                  log.info( 'excluding: '+ dotgitdiraround)
+                  dotgitdirs.remove( dotgitdiraround )
+  return dotgitdirs
+
+def preprocess_exclude_entry(uglystring):
+  """
+  String comes in , list with absolute pathnames that are os.path.normcase or [], comes out.
+  Find is used to find .gitdir that should be exluded. So uglystring needs to point at something.
+  No Wildcards.
+  """
+  if not path.exists(uglystring):
+      return []
+  if not path.basename( path.normpath( uglystring ) ) == '.git':
+      # do a search for .git dirs
+      ret_list = []
+      for thing in find_dotgitdirs(uglystring):
+          ret_list.append( path.normcase( path.abspath( thing ) ) )
+      return ret_list
+  else:
+      # already a .git path so return it as list with one element
+      return [ path.normpath( path.abspath( uglystring ) ) ]
+  
+def find_dotgitdirs(p):
+    """
+    searches locally and remot for ".git" dirs inside of path
+    """
+    log.debug('searching for dotgitdir in "'+ p +'" ...')
+
+    # useing find to find em
+    findcmdbase = 'find'
+    if p is not None:
+        findcmdbase=findcmdbase+' '+ p
+    # using grep to grep em
+    grepcmd = "grep -E '/[.]git$'"
+
+    cwd = getcwd() # get current workdir 
+
+    cmd           = findcmdbase + '|' + grepcmd
+    cmd_remote    = prepend_goto_dir_to_fishcode( cmd, cwd )
+    log.info("cmd for find em: " + cmd)
+    log.info("cmd for find em on the remote system: "+ cmd_remote)
+   
+    #prepare the lists
+    liste_local   = []
+    liste_remote  = []
+   
+    #local scan
+    try:    out = check_output_fish_shellscript( cmd )
+    except  KeyboardInterrupt: raise # Feature: Interruptable
+    except: 
+            log.warning('LOCAL Find returned errors, something went wrong.' )    
+            raise
+    liste_local = out.decode( errors = 'replace' ).splitlines() 
+    for j in liste_local:
+        log.debug( 'found some local git dir : ' + j )
+   
+    #remote scan
+    try:    out = check_output_remote_fish_shellscript( cmd_remote, sshhost_string )
+    except  KeyboardInterrupt: raise
+    except CalledProcessError:
+        var0 = out.decode(errors="replace")
+        log.debug(out)
+        var1 = var0.find("Directory")
+        if ( var0 is not -1) and (var0[var1:].find("does not exist") is not -1):
+            log.debug("case to handle")
+    except:
+        log.warning('REMOTE find returned errors, something went wrong.' )    
+        raise
+    liste_remote = out.decode(errors='replace').splitlines()
+    for j in liste_remote:
+        log.debug( 'found some remote git dir : ' + j )
+
+    # return concatenated list
+    return liste_remote+liste_local
+
+
+
+def append2excludefile(repopath,excludelistfilename):
+  log.debug('')
+  f=open(excludelistfilename,'at')
+  f.write('\n')
+  f.write(append_dotgit_to_path(repopath))
+  f.close()
+
+def check_init_remote_git_dir(d):
+    log.debug('')
+    fishshellscript="git init "+d
+    if is_exitcode_ok_remote_fish_shellscript(fishshellscript,sshhost_string):
+        log.debug('true')
+        return True
+    else:
+        log.debug('false')
+        return False
+
+def check_ask_init_git_dir(d):
+    log.debug('')
+    fishshellscript="git init "+d
+    print()
+    if input('do (y/n) ?: '+fishshellscript) == "y":
+        if is_exitcode_ok_fish_shellscript( fishshellscript):
+            return True
+        else:
+            return False
+    else:
+        return False
+
+
+def is_debugging_on():
+    if LOGLEVEL == logging.DEBUG:
+        return True
+    else:
+        return False
+
+
+def gen_repopath_liste():
+    """
+    returns all the path of all the .git repos
+    """
+    repo_path_liste=[]
+    l = generate_liste_local()
+    if len(l) == 0:
+        print("nothing found")
+        exit(1)
+    for i in l:
+      repo_path_liste.append(remove_trailing_somewhat_from_path(i))
+    return repo_path_liste
+   
+def prepare_path_liste(liste):
+    """
+    returns list of list with path components splitted in list
+    """
+    l=[]
+    for i in liste:
+        p=path.normpath(i)
+        pp=[]
+        while True:
+            sp=path.split(p)
+            pp.append(sp[1])
+            p=sp[0]
+            if sp[0]=='':
+                break
+        # reverse sort it
+        rpp=[]
+        for i in range(len(pp)-1, -1 , -1):
+             rpp.append(pp[i])
+        l.append(rpp)
+    #convert to string
+    ll=[]
+    for i in l:
+         s='/'
+         for j in i:
+             s=s+j+'/'
+         ll.append( ( i, s.strip('/') ) )   # tuple with list and string
+    return ll
+
+def clean_prepared_liste(prepared_list):
+    """
+    Removes pathes from the prepared list that are probably a git subrepo of another path.
+    This is done by checking if one of them is contained in another one and removeing the longer one.
+    """
+    kk=prepared_list.copy()
+    remove=[]
+    sl='/'
+    for i in prepared_list:
+        for j in kk:
+            if not j[1] == i[1]:            # second thing is the string to compare
+                # need slash in front and back !  example dir : '.' would not work
+                r1 = ( sl+j[1]+sl ).find( sl+i[1]+sl ) 
+                r2 = ( sl+i[1]+sl ).find( sl+j[1]+sl )
+                if r1 is not -1 or r2 is not -1:
+                    # one is part of the other -> remove the longer one because it is probably a subrepo of the shorter one
+                    #print(j[1]+'   <-->   '+i[1])
+                    if   len(j[1]) > len(i[1]):
+                        remove.append(j)      # append to removelist the whole thing
+                    elif len(j[1]) < len(i[1]):
+                        remove.append(i)
+                    else:
+                         raise Exception('error, unexpected case')
+    ## remove dupes
+    remove=uniq(remove)
+    ## remove thema
+    for i in remove:
+        print("removing: "+str(i))
+        prepared_list.remove(i)
+    # remove the "." dir
+    try:
+        (prepared_list.remove(['.']))
+    except ValueError:
+        pass
+    return prepared_list
+
+
+
+#########################  main  ###################################################
+def submodule_fix():
+    l=prepare_path_liste( gen_repopath_liste() )
+    #for i in l:
+    #    print(i)
+    
+    l=clean_prepared_liste(l)
+    #for i in l:
+    #    print(i)
+    
+    
+    cmdliste=[]
+    for i in l:
+           url = './'+i[1]
+           path = url
+           cmd='git submodule add ' + url + ' ' + path
+           cmd2='git rm --cached -r ' + path
+           cmdliste.append(cmd2)
+           cmdliste.append(cmd)
+    
+    for i in cmdliste:
+        print(i)
+    
+    print()
+    if input('apply cmds? If yes type uppercase yes:')=='YES':
+        for i in cmdliste:
+            call_fish_shellscript(i)
+    
+    
+    
+"""
+run it
+"""
+
+if args.submodule_fix:
+    submodule_fix()
+elif args.gitsuperpushpull:
+    gitsuperpushpull()
+else:
+    print("prog wants to know what to do")
