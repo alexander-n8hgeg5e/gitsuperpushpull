@@ -290,7 +290,7 @@ def check_pushpull(repopath):
         stdout,stderr=p.communicate()
         log.debug(p.returncode)
         if p.returncode is not 0:
-            raise CalledProcessError(p.returncode,fish_script,output=stdout,stderr=stderr)
+            raise CalledProcessError( p.returncode,fish_script,output=stdout+stderr )
       except KeyboardInterrupt: raise
       except CalledProcessError as e:
         log.info(e)
