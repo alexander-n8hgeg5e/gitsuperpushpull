@@ -160,6 +160,7 @@ def check_git_remote_entry_name(dotgitdir):
   log.debug('checking remote entry name in path: '+ repopath)
   fish_script=prepend_goto_dir_to_fishcode(remotecmd,repopath) 
   log.debug("running: "+ fish_script)
+  o=None
   try:
       o = check_output_fish_shellscript(fish_script).decode().splitlines()
   except:
@@ -294,8 +295,7 @@ def check_pushpull(repopath):
       except KeyboardInterrupt: raise
       except CalledProcessError as e:
         log.info(e)
-        log.info(e.stdout+e.stderr)
-        text=(e.stderr+e.stdout).decode(errors="replace")
+        text=(stderr+stdout).decode(errors="replace")
         log.debug('text: '+ text)
         f1 = text.find("does not appear to be a git repository")
         if f1 is not -1:
