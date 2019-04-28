@@ -36,3 +36,4 @@
 /exclude
 /exclude_3_mergeme
 /exclude__
+__pycache__/**
