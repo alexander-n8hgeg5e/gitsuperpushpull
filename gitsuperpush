@@ -30,14 +30,16 @@
 # Sie sollten eine Kopie der GNU General Public License zusammen mit diesem
 # Programm erhalten haben. Wenn nicht, siehe <https://www.gnu.org/licenses/>.
 from subprocess import check_output,check_call,Popen,PIPE,DEVNULL,STDOUT,CalledProcessError,call
-from os import path
-from shlex import split,quote
+from os import path,makedirs
+from shlex import split
+from shlex import quote
 import argparse
 from sys import argv
 from os import environ,getcwd
 import neovim
 import logging
 generated_liste=False
+repopathliste=None
 
 def parse_args():
     """Parse command-line arguments."""
@@ -45,16 +47,21 @@ def parse_args():
     parser.add_argument('-q', '--quick', type=int , metavar='days' ,action="store" ,help='speed up, by only processing dirs modified  more recently than now minus days (+/- 1 day)')
     parser.add_argument(      '--pim', action="store_true", default=False ,help='push pim')
     parser.add_argument(      '--portage',action="store_true", default=False , help='add portage dir to sync, needs --sync/-s')
-    parser.add_argument('-t', '--ssh-target', action="store" ,help='string that defines the other host and that is configured for ssh like foo in "ssh foo"')
+    parser.add_argument('-t', '--ssh_target',default=None, action="store" ,help='string that defines the other host and that is configured for ssh like foo in "ssh foo"')
     parser.add_argument('-d', '--debug', action="store", default=logging.WARNING,type=int ,help='debug level 0-100, lower value means more debug messages, default is '+str(logging.WARNING)+'.')
     parser.add_argument(      '--search-path', action="store" ,help='call from git toplevel and specify path to search stuff')
-    parser.add_argument('-u', '--url', action="store" ,help='url to use for submodule url generation')
+    parser.add_argument('-u', '--url', action="store", default='' ,help='url to use for submodule url generation or path for --cmd or --clone')
     parser.add_argument('-f', '--file', action="store" , type=str,default=None, help='path to file with .git dirs listed')
-    parser.add_argument('-a', '--urlpostfix', action="store" , default='.git' ,help='append url postfix')
+    parser.add_argument('-a', '--urlpostfix', action="store" , default="" ,help='append url postfix')
+    parser.add_argument('-c', '--cut-path',  action="store" , default=0 , type=int ,help='cut this many path components from path for url')
     parser.add_argument('-r', '--remote-name', action="store" , default=None ,help='name of remote')
+    parser.add_argument('-D', '--mkdir', action="store_true" , default=False ,help='option for -C/--cmd : create dir if not existing')
+    parser.add_argument('-C', '--cmd', action="store" , default=None ,help='do cmd in gitdirs specified in file')
     parser.add_argument('-b', '--branch', action="store" , default=None ,type=str,help='name of branch or git ref to operate on')
     parser.add_argument('-p', '--push', action="store_true" ,help='push stuff, if no branch specified, all refs, except tags and the remote branches of the remote')
+    parser.add_argument('-o', '--clone', action="store_true" ,help='clone to -t dir as basedir , into dirs from -f that are cutted with -c and prefixed by -u,and postfixed by -a, respects dryrun' )
     parser.add_argument('-x', '--fix', action="store_true" ,help='fix more ask less')
+    parser.add_argument('-N', '--dry-run', action="store_true" ,help='works only for "-C/--cmd"')
     parser.add_argument('-n', '--non-interactive', action="store_true" ,help='non interactive')
     parser.add_argument('-v', '--verbose', action="store_true" ,help='be verbose')
     parser.add_argument('-s', '--shorten-remote-path', action="store_true" ,default=False,help='shortens path for remote like this: .config/nvim to .nvim')
@@ -63,6 +70,7 @@ def parse_args():
     return parser.parse_args()
 
 args=parse_args()
+args_=args
 
 ############     config   ###################################################################
 
@@ -903,18 +911,21 @@ def scan_file_and_include(filename):
     return l
          
 def scan_file(filename):
-
     # need search path
     search_path = path.abspath( path.dirname( filename ))
 
     lines=scan_file_and_include( filename )
-    
+    log.debug(lines) 
     # eval shell vars
     l=[]
     for line in lines:
         out=check_output_fish_shellscript('echo '+ line )
         l.append(out.decode(errors='replace').strip())
-    lines=l
+    log.debug(l)
+    return l
+
+def scan_file_and_check(filename):
+    lines=scan_file(filename)
     # check for .git dir
     liste_local =[]
     liste_remote=[]
@@ -1051,6 +1062,8 @@ def is_exitcode_ok_remote_fish_shellscript(fish_script,sshhost_string, *args, **
 
   # prepare the thing
   pythonish_sshcmd = [ 'ssh', sshhost_string , ssh_shell_script_aka_command  ]
+  if args_.dry_run:
+      print(pythonish_sshcmd)
   # and let it run
   return call(pythonish_sshcmd, *args, **kwargs)
 
@@ -1064,6 +1077,8 @@ def call_fish_shellscript(fish_script, *args, **kwargs):
   log.debug( kwargs)
   # prepare the thing
   pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  if args_.dry_run:
+      print(pythonish_cmd)
   # and let it run
   return call(pythonish_cmd, *args, stderr=STDOUT, **kwargs)
 
@@ -1077,6 +1092,8 @@ def call_fish_shellscript_silent(fish_script, *args, **kwargs):
   log.debug( kwargs)
   # prepare the thing
   pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  if args_.dry_run:
+      print(pythonish_cmd)
   # and let it run
   return call(pythonish_cmd, *args, **kwargs)
 
@@ -1086,6 +1103,8 @@ def check_except_fish_shellscript(fish_script, *args, **kwargs):
   """
   # prepare the thing
   pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  if args_.dry_run:
+      print(pythonish_cmd)
   # and let it run
   try:
       out = check_output(pythonish_cmd, *args, stderr=STDOUT, **kwargs)
@@ -1100,6 +1119,8 @@ def check_except_fish_shellscript_silent(fish_script, *args, **kwargs):
   """
   # prepare the thing
   pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  if args_.dry_run:
+      print(pythonish_cmd)
   # and let it run
   try:
       out = check_output(pythonish_cmd, *args, **kwargs)
@@ -1114,6 +1135,8 @@ def is_exitcode_ok_fish_shellscript(fish_script, *args, **kwargs):
   """
   # prepare the thing
   pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  if args_.dry_run:
+      print(pythonish_cmd)
   # and let it run
   try:
       out = check_output(pythonish_cmd, *args, stderr=STDOUT, **kwargs)
@@ -1131,6 +1154,8 @@ def is_exitcode_ok_fish_shellscript_silent(fish_script, *args, **kwargs):
   """
   # prepare the thing
   pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  if args_.dry_run:
+      print(pythonish_cmd)
   # and let it run
   try:
       out = check_output(pythonish_cmd, *args, **kwargs)
@@ -1149,6 +1174,8 @@ def Popen_fish_shellscript(fish_script, *args, **kwargs):
   """
   # prepare the thing
   pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  if args_.dry_run:
+      print(pythonish_cmd)
   # and let it run
   log.debug("running fish shellscript and return output: "+ str(fish_script))
   return Popen(pythonish_cmd, *args, stdout=PIPE, stderr=PIPE, shell=False, **kwargs)
@@ -1163,6 +1190,8 @@ def Popen_remote_fish_shellscript(fish_script, sshhost_string, *args,  **kwargs)
 
   # prepare the thing
   pythonish_sshcmd = [ 'ssh', sshhost_string , ssh_shell_script_aka_command ]
+  if args_.dry_run:
+      print(pythonish_sshcmd)
   # and let it run
   return Popen(pythonish_sshcmd, *args, shell=False, **kwargs)
 
@@ -1172,6 +1201,8 @@ def check_output_fish_shellscript(fish_script, stdout=PIPE, stderr=PIPE, *args, 
   """
   # prepare the thing
   pythonish_cmd = [ 'fish', '-c' , fish_script  ]
+  if args_.dry_run:
+      print(pythonish_cmd)
   # and let it run
   log.debug("running fish shellscript and return output: "+ str(fish_script))
   return check_output(pythonish_cmd, *args, stderr=STDOUT, shell=False, **kwargs)
@@ -1186,6 +1217,8 @@ def check_output_remote_fish_shellscript(fish_script, sshhost_string, *args,  **
 
   # prepare the thing
   pythonish_sshcmd = [ 'ssh', sshhost_string , ssh_shell_script_aka_command ]
+  if args_.dry_run:
+      print(pythonish_sshcmd)
   # and let it run
   return check_output(pythonish_sshcmd, *args, stderr=STDOUT, shell=False, **kwargs)
 
@@ -1461,33 +1494,38 @@ def prepare_path_liste(liste):
     """
     returns (['pat_component','path_component',...],'path_as_string')
     """
-    l=[]
+    ppp=[]
     for i in liste:
         p=path.normpath(i)
         pp=[]
-        while True:
+        for i in range(1,100000):
+            if i%100 == 0:
+                 log.warn("very deep path or bug in software")
             sp=path.split(p)
-            pp.append(sp[1])
+            pp=[sp[1]] + pp
             p=sp[0]
+            if sp[0]=='/':
+                pp=[sp[0]] + pp
+                break
             if sp[0]=='':
                 break
-        # reverse sort it
-        rpp=[]
-        for i in range(len(pp)-1, -1 , -1):
-             rpp.append(pp[i])
-        l.append(rpp)
+        ppp.append(pp)
+
     #convert to string
     ll=[]
-    for i in l:
-         s='/'
-         for j in i:
-             s=s+j+'/'
-         ll.append( ( i, s.strip('/') ) )   # tuple with list and string
+    for i in ppp:
+        if pp[0] == '/':
+            s = '/'+'/'.join(i[1:])
+        else:
+            s = '/'.join(i)
+        ll.append( ( i, s ) )   # tuple with list and string
+    log.debug(ll)
     return ll
 
-def clean_prepared_liste(prepared_list):
+def prepared_path_liste_for_submodule_fix(prepared_list):
     """
     Removes stuff that is not useful for submodule fixing.
+    dataformat (in/out): (['pathcomponent','basename_path'],'path'))
     Removes pathes from the prepared list that are probably a git subrepo of another path.
     And the path ./.git is removed because this is probably the repo to fix, itself.
     Rest is done by checking if one of them is contained in another one and removeing the longer one.
@@ -1512,7 +1550,7 @@ def clean_prepared_liste(prepared_list):
                          raise Exception('error, unexpected case')
     ## remove dupes
     remove=uniq(remove)
-    ## remove thema
+    ## remove em
     for i in remove:
         log.info("removing: "+str(i))
         prepared_list.remove(i)
@@ -1538,29 +1576,29 @@ def __shorten_path(p):
     else:
         return p       # return original path
 
-def __make_url(  local_path , url=None , shorten_remote_path=True ,urlpostfix=""):
+def __make_url(  local_path , url=None , cut_path=0 , shorten_remote_path=True ,urlpostfix=""):
+    if not cut_path == 0:
+        local_path = cut_path_components( local_path, cut_path )
     if url is None:
         return './' + local_path
     else:
         #from validators import url as is_valid_url
         if True:
-            if url[-1]=='/':
-                url=url[0:-2]
             if shorten_remote_path:
-                return url + '/' + __shorten_path(local_path) + urlpostfix
+                return url  + __shorten_path(local_path) + urlpostfix
             else:
-                return url + '/' + path.normpath(local_path) + urlpostfix
+                return url  + local_path + urlpostfix
         else:
             raise Exception('url invalid')
+        
+def cut_path_components(p,count):
+        sep='/'
+        return sep.join(p.split(sep)[count:])
     
     
 def submodule_fix(url=None,pathfile=None, shorten_remote_path=True,urlpostfix=""):
-    if not pathfile==None:
-        l=read_path_file( pathfile )
-    else:
-        l=prepare_path_liste( gen_repopath_liste() )
-    
-    l=clean_prepared_liste(l)
+    l=get_repopath_liste() 
+    l=prepared_path_liste_for_submodule_fix(l)
     
     cmdliste=[]
     for i in l:
@@ -1580,25 +1618,39 @@ def submodule_fix(url=None,pathfile=None, shorten_remote_path=True,urlpostfix=""
         for i in cmdliste:
             call_fish_shellscript(i)
 
-def remote_path_fix(remotename,url=None,pathfile=None, shorten_remote_path=False,urlpostfix=""):
-    if not pathfile==None:
-        l=read_path_file(pathfile)
+
+def get_repopath_liste():
+    """
+    in/out: ([pathp,pathp2],path)
+    """
+    global repopathliste
+    if repopathliste is None:
+        if not args.file==None:
+            l = scan_file(args.file)
+        else:
+            l = gen_repopath_liste()
+        log.debug("")
+        log.debug(l)
+        l=prepare_path_liste(l)
     else:
-        l=prepare_path_liste( gen_repopath_liste() )
+        l=repopathliste
     #for i in l:
     #    print(i)
-    
-    l=clean_prepared_liste(l)
+    return l
+
+
+def remote_path_fix(remotename,url=None, pathfile=None, cut_path=0, shorten_remote_path=False,urlpostfix=""):
+    l=get_repopath_liste()
     #for i in l:
     #    print(i)
     
     cmdliste=[]
     for i in l:
            log.debug(i)
-           i_url = __make_url(local_path=i , url=url,  shorten_remote_path=shorten_remote_path , urlpostfix=urlpostfix)
-           p = './' + i[1] 
-           cmd='cd '+path.abspath(p) +' ;set -e GIT_DIR;set -e GIT_WORK_TREE; git remote rm ' + remotename
-           cmd2='cd '+path.abspath(p)+' ;set -e GIT_DIR;set -e GIT_WORK_TREE; git remote add ' + remotename + ' '+ i_url
+           i_url = __make_url(local_path=i[1] , url=url, cut_path=cut_path, shorten_remote_path=shorten_remote_path , urlpostfix=urlpostfix)
+           p = i[1]
+           cmd= 'cd '+ path.abspath(p) +' ;set -e GIT_DIR;set -e GIT_WORK_TREE; git remote rm ' + remotename
+           cmd2='cd '+ path.abspath(p)+' ;set -e GIT_DIR;set -e GIT_WORK_TREE; git remote add ' + remotename + ' '+ i_url
            cmdliste.append(cmd)
            cmdliste.append(cmd2)
     
@@ -1609,7 +1661,53 @@ def remote_path_fix(remotename,url=None,pathfile=None, shorten_remote_path=False
     if input('apply cmds? If yes type uppercase yes: ')=='YES':
         for i in cmdliste:
             call_fish_shellscript(i)
-   
+
+def prepare_path(p,cut_path=0,url='',postfix='',shorten_path=False):
+          source=p
+          if cut_path is None:
+                  if shorten_path:
+                       target = url + __shorten_path(path.basename(source)) + postfix
+                  else:
+                       target = url + path.basename(source) + postfix
+          else:
+                  d = cut_path_components(source,cut_path)
+                  if shorten_path:
+                       target = url + __shorten_path(d) + postfix
+                  else:
+                       target = url + d + postfix
+          return target
+
+def do_cmd(cut_path=None,url='',postfix='',shorten_path=False):
+    l=get_repopath_liste()
+    log.debug("")
+    log.debug(l)
+    for d in l:
+          d = prepare_path(d[1],cut_path=cut_path,url=url,postfix=postfix,shorten_path=shorten_path)
+          cmd = args.cmd
+          cmd = prepend_goto_dir_to_fishcode(cmd , d )
+          if args.verbose or args.dry_run:
+              print(cmd)
+          if not args.dry_run:
+              call_fish_shellscript(cmd)
+        
+def do_clone(url, cut_path=None , postfix='' ,shorten_path=False,branch=None):
+    l=scan_file(args.file)
+    for source in l:
+          target = prepare_path(source,cut_path=cut_path,url=url,postfix=postfix,shorten_path=shorten_path)
+          if branch is not None:
+              cmd = 'git clone -b ' +branch+ ' -- '+source+' '+target
+          else:
+              cmd = 'git clone -- '+source+' '+target
+          createdir = not path.exists(target)
+          if args.verbose or args.dry_run:
+              print()
+              if createdir and args.mkdir:
+                  print("would create path: "+ target)
+              print(cmd)
+          if not args.dry_run:
+              if createdir and args.mkdir:
+                   makedirs(target)
+              call_fish_shellscript(cmd)
 
 #########################  main  ###################################################
     
@@ -1627,9 +1725,13 @@ run it
 if args.submodule_fix:
     submodule_fix(url=args.url,urlpostfix=args.urlpostfix,pathfile=args.file,shorten_remote_path=args.shorten_remote_path)
 if args.remote_path_fix:
-    remote_path_fix(args.remote_name,url=args.url,urlpostfix=args.urlpostfix,pathfile=args.file ,shorten_remote_path=args.shorten_remote_path)
+    remote_path_fix(args.remote_name,url=args.url,urlpostfix=args.urlpostfix,pathfile=args.file ,shorten_remote_path=args.shorten_remote_path,cut_path=args.cut_path)
 if args.push or args.portage:
     gitsuperpush()
 if args.pim:
     ## do some other stuff
     calendarsync()
+if args.cmd is not None:
+    do_cmd(cut_path=args.cut_path,url=args.url,postfix=args.urlpostfix)
+if args.clone:
+    do_clone( args.url , cut_path=args.cut_path,postfix=args.urlpostfix, shorten_path = args.shorten_remote_path ,branch=args.branch)
