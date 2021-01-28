@@ -301,7 +301,7 @@ def check_git_remote_entry_name(dotgitdir):
   log.debug("output was: "+str(o))
   foundname=False
   for j in o:
-      if not j.find(sshhost_string) is -1:
+      if not j.find(sshhost_string) == -1:
           foundname=True
   return foundname
 
@@ -328,7 +328,7 @@ def check_git_remote_entry_path(name, url, dotgitdir):
       if j.find(name) == 0:
           log.debug("found name: "+ name)
           log.debug("searching for '"+url+"'"+" in : '"+j+"'" )
-          if not j.find(url) is -1:
+          if not j.find(url) == -1:
               log.debug("found '"+url+"'"+" in :"+j )
               foundurl=True
   return o,foundurl
@@ -390,7 +390,7 @@ def check_push(repopath):
       log.info(e)
       text=e.errors
       f1 = text.find("does not appear to be a git repository")
-      if f1 is not -1:
+      if f1 != -1:
           ask_rsync_to_remote(repopath)
       log.info('PUSH FAILED for branch "'+branch+'"')
       return False
@@ -435,7 +435,7 @@ def push_branch(repopath,branch):
   except CalledProcessError:
       raise PushFailed( 'push failed: ret code: '+ str(p.returncode)+ '\n'+fish_script, [stdout]+[stderr] )
   log.debug(p.returncode)
-  if p.returncode is not 0:
+  if p.returncode != 0:
       raise PushFailed( 'push failed: ret code: '+ str(p.returncode)+ '\n'+fish_script, [stdout]+[stderr] )
 
 def prepend_goto_dir_to_fishcode(code,dir_):
@@ -679,7 +679,7 @@ def get_branches(repopath):
   l = check_output_fish_shellscript(fish_script).decode().splitlines()
   log.debug('fish script done')
   for i in l:
-      if ( (i.find('/') is -1) or ((i.find('HEAD') is not -1 ) and ( i.find('losgelöst') is not -1) ) ):
+      if ( (i.find('/') == -1) or ((i.find('HEAD') != -1 ) and ( i.find('losgelöst') != -1) ) ):
           # means no refs/heads/branchname output
           # so no branch on this line
           pass
@@ -840,7 +840,7 @@ def scan(quick=None,local=True,remote=True):
             var0 = out.decode(errors="replace")
             log.debug(out)
             var1 = var0.find("Directory")
-            if ( var0 is not -1) and (var0[var1:].find("does not exist") is not -1):
+            if ( var0 != -1) and (var0[var1:].find("does not exist") != -1):
                 log.debug("case to handle")
         except Exception as e:
             log.error('REMOTE find returned errors, something went wrong.' )
@@ -1395,7 +1395,7 @@ def find_dotgitdirs(p):
         var0 = out.decode(errors="replace")
         log.debug(out)
         var1 = var0.find("Directory")
-        if ( var0 is not -1) and (var0[var1:].find("does not exist") is not -1):
+        if ( var0 != -1) and (var0[var1:].find("does not exist") != -1):
             log.debug("case to handle")
     except:
         log.warning('REMOTE find returned errors, something went wrong.' )    
@@ -1539,7 +1539,7 @@ def prepared_path_liste_for_submodule_fix(prepared_list):
                 # need slash in front and back !  example dir : '.' would not work
                 r1 = ( sl+j[1]+sl ).find( sl+i[1]+sl ) 
                 r2 = ( sl+i[1]+sl ).find( sl+j[1]+sl )
-                if r1 is not -1 or r2 is not -1:
+                if r1 != -1 or r2 != -1:
                     # one is part of the other -> remove the longer one because it is probably a subrepo of the shorter one
                     #print(j[1]+'   <-->   '+i[1])
                     if   len(j[1]) > len(i[1]):
