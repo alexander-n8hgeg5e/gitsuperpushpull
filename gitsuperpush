@@ -48,12 +48,15 @@ def parse_args():
     parser.add_argument(      '--pim', action="store_true", default=False ,help='push pim')
     parser.add_argument(      '--portage',action="store_true", default=False , help='add portage dir to sync, needs --sync/-s')
     parser.add_argument('-t', '--ssh_target',default=None, action="store" ,help='string that defines the other host and that is configured for ssh like foo in "ssh foo"')
-    parser.add_argument('-d', '--debug', action="store", default=logging.WARNING,type=int ,help='debug level 0-100, lower value means more debug messages, default is '+str(logging.WARNING)+'.')
+    parser.add_argument('-d', '--debug', action="store", default=logging.WARNING,type=int ,help='debug level 1-100, lower value means more debug messages, default is '+str(logging.WARNING)+'.')
     parser.add_argument(      '--search-path', action="store" ,help='call from git toplevel and specify path to search stuff')
     parser.add_argument('-u', '--url', action="store", default='' ,help='url to use for submodule url generation or path for --cmd or --clone')
     parser.add_argument('-f', '--file', action="store" , type=str,default=None, help='path to file with .git dirs listed')
     parser.add_argument('-a', '--urlpostfix', action="store" , default="" ,help='append url postfix')
-    parser.add_argument('-c', '--cut-path',  action="store" , default=0 , type=int ,help='cut this many path components from path for url')
+    parser.add_argument ('-c', '--cut-path',  action="store" , default=0 , type=int ,
+                        help =  'Cut this many path components from path for url. '
+                                'Cuts from the beginning.'
+                        )
     parser.add_argument('-r', '--remote-name', action="store" , default=None ,help='name of remote')
     parser.add_argument('-D', '--mkdir', action="store_true" , default=False ,help='option for -C/--cmd : create dir if not existing')
     parser.add_argument('-C', '--cmd', action="store" , default=None ,help='do cmd in gitdirs specified in file')
@@ -64,7 +67,10 @@ def parse_args():
     parser.add_argument('-N', '--dry-run', action="store_true" ,help='works only for "-C/--cmd"')
     parser.add_argument('-n', '--non-interactive', action="store_true" ,help='non interactive')
     parser.add_argument('-v', '--verbose', action="store_true" ,help='be verbose')
-    parser.add_argument('-s', '--shorten-remote-path', action="store_true" ,default=False,help='shortens path for remote like this: .config/nvim to .nvim')
+    parser.add_argument (
+                        '-s', '--shorten-remote-path', action="store_true" ,default=False,
+                        help =  'Shortens path for remote like this: .config/nvim to .nvim. '
+                                'NOTE: needs -c --cut-path to find the right place in the path')
     parser.add_argument(      '--remote-path-fix', action="store_true" , help="""Re-add all remotes. Specify list of .git dirs in file via --pathfile\nThe prog asks and shows a list of the commands.""")
     parser.add_argument('-m', '--submodule-fix', action="store_true" , help= """Removes from the index all path that has a .git dir and has no .git above them\nThen it uses 'git add submodule' to add the repo as submodule in that place.\nThe prog asks and shows a list of the commands.""")
     return parser.parse_args()
@@ -96,6 +102,7 @@ def init():
             LOGLEVEL=logging.INFO
     else:
             LOGLEVEL=args.debug
+            print(f"LOGLEVEL={LOGLEVEL}")
 
     SHELLCMD_BASE = [ 'fish', '-c' ]
     sshhost_string=args.ssh_target
@@ -1522,7 +1529,7 @@ def __shorten_path(p):
     if not start with dot, don't prepends the dot
     """
     if args.debug:
-        log.debug(f'enter: __shorten_path, args:{p}')
+        log.debug(f'args:{p}')
     pp = path.split( path.normpath(p) )
     # p starts with . and path has a slash '/'
     if p[0] == '.' and len(pp[0]) > 0 :
