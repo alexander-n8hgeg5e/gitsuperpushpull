@@ -69,40 +69,51 @@ def parse_args():
     parser.add_argument('-m', '--submodule-fix', action="store_true" , help= """Removes from the index all path that has a .git dir and has no .git above them\nThen it uses 'git add submodule' to add the repo as submodule in that place.\nThe prog asks and shows a list of the commands.""")
     return parser.parse_args()
 
-args=parse_args()
-args_=args
 
-############     config   ###################################################################
-
-excludelistfilename=".gitsuperpushpull_exclude"
-
-
-if args.verbose or args.debug >= logging.INFO:
-        LOGLEVEL=logging.INFO 
-else:
-        LOGLEVEL=args.debug
-
-SHELLCMD_BASE = [ 'fish', '-c' ]
-sshhost_string=args.ssh_target
+excludelistfilename=None
+LOGLEVEL=None
+SHELLCMD_BASE=None
+sshhost_string=None
+args=None
+args_=None
+log=None
 
 
+def init():
+    global excludelistfilename
+    global LOGLEVEL
+    global SHELLCMD_BASE
+    global sshhost_string
+    global args
+    global args_
+    global log
+    args=parse_args()
+    args_=args
 
+    excludelistfilename=".gitsuperpushpull_exclude"
 
-############     logging     ###################################################################
-try:
-    log=logging.getLogger('root')
-    log.handlers=[]
-    log.setLevel(LOGLEVEL)
-    handler=logging.StreamHandler()
-    ## level for this handler
-    handler.setLevel(LOGLEVEL)
-    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(funcName)s: %(message)s'))
-    log.addHandler(handler)
-except KeyboardInterrupt as e: raise e
-except Exception as e: logging.info(e)
+    if args.verbose or args.debug >= logging.INFO:
+            LOGLEVEL=logging.INFO
+    else:
+            LOGLEVEL=args.debug
 
-log.debug(excludelistfilename)
-
+    SHELLCMD_BASE = [ 'fish', '-c' ]
+    sshhost_string=args.ssh_target
+    ############     logging     ###################################################################
+    try:
+        log=logging.getLogger('root')
+        log.handlers=[]
+        log.setLevel(LOGLEVEL)
+        handler=logging.StreamHandler()
+        ## level for this handler
+        handler.setLevel(LOGLEVEL)
+        handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(funcName)s: %(message)s'))
+        log.addHandler(handler)
+    except KeyboardInterrupt as e: raise e
+    except Exception as e: logging.info(e)
+    
+    log.debug(excludelistfilename)
+    
 ############   brain functions   ##########################################################################################
 
 def gitsuperpush():
@@ -1658,7 +1669,7 @@ def do_clone(url, cut_path=None , postfix='' ,shorten_path=False,branch=None):
               call_fish_shellscript(cmd)
 
 
-if __name__=="main":
+if __name__=="__main__":
     #########################  main  #########################
     # clean env
     try:
@@ -1666,6 +1677,8 @@ if __name__=="main":
         environ.pop('GIT_WORK_TREE')
     except KeyError:
         pass
+
+    init()
     
     """
     run it
