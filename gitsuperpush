@@ -1510,6 +1510,8 @@ def __shorten_path(p):
     shortens the path like this: .config/nvim to .nvim
     if not start with dot, don't prepends the dot
     """
+    if args.debug:
+        log.debug(f'enter: __shorten_path, args:{p}')
     pp = path.split( path.normpath(p) )
     # p starts with . and path has a slash '/'
     if p[0] == '.' and len(pp[0]) > 0 :
@@ -1528,7 +1530,10 @@ def __make_url(  local_path , url=None , cut_path=0 , shorten_remote_path=True ,
         #from validators import url as is_valid_url
         if True:
             if shorten_remote_path:
-                return url  + __shorten_path(local_path) + urlpostfix
+                ret = url  + __shorten_path(local_path) + urlpostfix
+                if args.debug:
+                    log.debug(f"return: {ret}")
+                return ret
             else:
                 return url  + local_path + urlpostfix
         else:
@@ -1652,29 +1657,30 @@ def do_clone(url, cut_path=None , postfix='' ,shorten_path=False,branch=None):
                    makedirs(target)
               call_fish_shellscript(cmd)
 
-#########################  main  ###################################################
+
+if __name__=="main":
+    #########################  main  #########################
+    # clean env
+    try:
+        environ.pop('GIT_DIR')
+        environ.pop('GIT_WORK_TREE')
+    except KeyError:
+        pass
     
-# clean env
-try:
-    environ.pop('GIT_DIR')
-    environ.pop('GIT_WORK_TREE')
-except KeyError:
-    pass
-
-"""
-run it
-"""
-
-if args.submodule_fix:
-    submodule_fix(url=args.url,urlpostfix=args.urlpostfix,pathfile=args.file,shorten_remote_path=args.shorten_remote_path)
-if args.remote_path_fix:
-    remote_path_fix(args.remote_name,url=args.url,urlpostfix=args.urlpostfix,pathfile=args.file ,shorten_remote_path=args.shorten_remote_path,cut_path=args.cut_path)
-if args.push or args.portage:
-    gitsuperpush()
-if args.pim:
-    ## do some other stuff
-    calendarsync()
-if args.cmd is not None:
-    do_cmd(cut_path=args.cut_path,url=args.url,postfix=args.urlpostfix)
-if args.clone:
-    do_clone( args.url , cut_path=args.cut_path,postfix=args.urlpostfix, shorten_path = args.shorten_remote_path ,branch=args.branch)
+    """
+    run it
+    """
+    
+    if args.submodule_fix:
+        submodule_fix(url=args.url,urlpostfix=args.urlpostfix,pathfile=args.file,shorten_remote_path=args.shorten_remote_path)
+    if args.remote_path_fix:
+        remote_path_fix(args.remote_name,url=args.url,urlpostfix=args.urlpostfix,pathfile=args.file ,shorten_remote_path=args.shorten_remote_path,cut_path=args.cut_path)
+    if args.push or args.portage:
+        gitsuperpush()
+    if args.pim:
+        ## do some other stuff
+        calendarsync()
+    if args.cmd is not None:
+        do_cmd(cut_path=args.cut_path,url=args.url,postfix=args.urlpostfix)
+    if args.clone:
+        do_clone( args.url , cut_path=args.cut_path,postfix=args.urlpostfix, shorten_path = args.shorten_remote_path ,branch=args.branch)
