@@ -1,0 +1,8 @@
+Fri Jan 14 06:31:19 PM CET 2022
+gsp -f ~/.gitpacks/github -r origin --remote-path-fix -u https://github.com/alexander-n8hgeg5e/ -s -c3 -a .git
+
+readded all the remote entries
+
+gsp -f ~/.gitpacks/github -C 'git pull origin (ghb);or echo (pwd) FAILED'
+
+pulled most repos except some with detached head state
