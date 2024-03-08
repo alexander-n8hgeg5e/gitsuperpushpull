@@ -1704,3 +1704,5 @@ if __name__=="__main__":
         do_cmd(cut_path=args.cut_path,url=args.url,postfix=args.urlpostfix)
     if args.clone:
         do_clone( args.url , cut_path=args.cut_path,postfix=args.urlpostfix, shorten_path = args.shorten_remote_path ,branch=args.branch)
+
+# vim: set foldnestmax=99 foldlevel=0 :
