@@ -1692,17 +1692,29 @@ if __name__=="__main__":
     """
     
     if args.submodule_fix:
+        if args.verbose:
+            print("submodule_fix")
         submodule_fix(url=args.url,urlpostfix=args.urlpostfix,pathfile=args.file,shorten_remote_path=args.shorten_remote_path)
     if args.remote_path_fix:
+        if args.verbose:
+            print("remote_path_fix")
         remote_path_fix(args.remote_name,url=args.url,urlpostfix=args.urlpostfix,pathfile=args.file ,shorten_remote_path=args.shorten_remote_path,cut_path=args.cut_path)
     if args.push or args.portage:
+        if args.verbose:
+            print("gitsuperpush")
         gitsuperpush()
     if args.pim:
+        if args.verbose:
+            print("calendarsync")
         ## do some other stuff
         calendarsync()
     if args.cmd is not None:
+        if args.verbose:
+            print("do_cmd")
         do_cmd(cut_path=args.cut_path,url=args.url,postfix=args.urlpostfix)
     if args.clone:
+        if args.verbose:
+            print("do_clone")
         do_clone( args.url , cut_path=args.cut_path,postfix=args.urlpostfix, shorten_path = args.shorten_remote_path ,branch=args.branch)
 
 # vim: set foldnestmax=99 foldlevel=0 :
