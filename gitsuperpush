@@ -476,7 +476,7 @@ def terminal(repopath):
   nvim.command('tabnew')
   fish_script=prepend_goto_dir_to_fishcode('echo ok',repopath)
   nvim.call('termopen',['fish', '-C', fish_script])
-  nvim.command('tnoremap <buffer> <C-q> <C-\><C-n>:q<CR>:call win_gotoid('+str(win_id)+')<CR>i')
+  nvim.command('tnoremap <buffer> <C-q> <C-\\><C-n>:q<CR>:call win_gotoid('+str(win_id)+')<CR>i')
   message('>> press some key when done <<')
   input()
 
@@ -493,7 +493,7 @@ def ask_terminal(repopath):
     nvim.command('tabnew')
     fish_script=prepend_goto_dir_to_fishcode('echo ok',repopath)
     nvim.call('termopen',['fish', '-C', fish_script])
-    nvim.command('tnoremap <buffer> <C-q> <C-\><C-n>:q<CR>:call win_gotoid('+str(win_id)+')<CR>i')
+    nvim.command('tnoremap <buffer> <C-q> <C-\\><C-n>:q<CR>:call win_gotoid('+str(win_id)+')<CR>i')
     message('done? press enter or so')
     input('done? press enter or so')
     return True
